@@ -116,18 +116,21 @@ def send_email(ipo):
     If you do not want to receive ipo alert email, Please contact to the above email.
     """
 
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
-    msg['To'] = EMAIL_SENDER
+    for r in receivers:
+        msg = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
+        msg['To'] = r   # Each person gets their own email
 
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-            print(f"Daily Alert sent to {len(receivers)} people.")
-    except Exception as e:
-        print(f"Email failed: {e}")
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+                server.sendmail(EMAIL_SENDER, r, msg.as_string())
+
+            print(f"Daily Alert sent to {r}")
+
+        except Exception as e:
+            print(f"Email failed for {r}: {e}")
 
 
 if __name__ == "__main__":
