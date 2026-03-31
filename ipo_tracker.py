@@ -123,8 +123,6 @@ def send_email(ipo):
     # ✔ dummy header (no receiver leaked)
     msg['To'] = "IPO Notification"
 
-    # ✔ optional BCC header (but envelope hides emails anyway)
-    msg['Bcc'] = ", ".join(receivers)
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
