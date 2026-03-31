@@ -116,22 +116,24 @@ def send_email(ipo):
     If you do not want to receive ipo alert email, Please contact to the above email.
     """
 
-    for r in receivers:
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
-        msg['To'] = r   # Each person gets their own email
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
 
-        try:
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-                server.sendmail(EMAIL_SENDER, r, msg.as_string())
+    # ✔ dummy header (no receiver leaked)
+    msg['To'] = "IPO Notification"
 
-            print(f"Daily Alert sent to {r}")
+    # ✔ optional BCC header (but envelope hides emails anyway)
+    msg['Bcc'] = ", ".join(receivers)
 
-        except Exception as e:
-            print(f"Email failed for {r}: {e}")
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
 
+            # ✔ single fast send
+            server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
 
-if __name__ == "__main__":
-    check_ipo_with_gpt()
+        print(f"Daily Alert sent to {len(receivers)} people.")
+
+    except Exception as e:
+        print(f"Email failed: {e}")
