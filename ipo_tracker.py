@@ -110,10 +110,11 @@ def send_email(ipo):
     ⏳ CLOSING DATE: {ipo['closing_date']}
 
        🚀 Good luck with your allotment!
+       
 
-        Please note that this is auto generated email, please check your meroshare (https://meroshare.cdsc.com.np/#/login) to verify it.
+        Please note that this is an auto generated email, please check your meroshare (https://meroshare.cdsc.com.np/#/login) to verify it.
     --------------------------------------------
-    If you do not want to receive ipo alert email, Please contact to the above email.
+    IPO Tracking System by Bhuwan Chaulagain
     """
 
     msg = MIMEText(body)
