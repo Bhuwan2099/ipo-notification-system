@@ -63,12 +63,15 @@ def check_ipo_with_gpt():
     """
 
     try:
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
+            input=[
+                {"role": "user", "content": prompt}
+            ],
             response_format={"type": "json_object"}
         )
-        found_ipos = json.loads(response.choices[0].message.content).get("items", [])
+        
+        found_ipos = json.loads(response.output_text).get("items", [])
     except Exception as e:
         print(f"GPT API Error: {e}")
         return
