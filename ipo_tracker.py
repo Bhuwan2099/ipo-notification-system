@@ -122,7 +122,7 @@ def send_email(ipo):
     msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
 
     # ✔ dummy header (no receiver leaked)
-    msg['To'] = "IPO Notification"
+    msg['To'] = EMAIL_SENDER
 
 
     try:
