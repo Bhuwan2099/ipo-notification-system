@@ -176,7 +176,7 @@ def send_email(ipo, is_test=False):
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
-    msg['To'] = "IPO Notification"
+    msg['To'] = EMAIL_SENDER
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
