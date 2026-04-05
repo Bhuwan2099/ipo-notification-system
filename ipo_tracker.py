@@ -7,21 +7,17 @@ from email.mime.text import MIMEText
 from datetime import datetime
 import json
 
-# --- Configuration (Pulled from GitHub Secrets & Environment) ---
+# --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
 EMAIL_FILE = "emails.txt"
 LOG_FILE = "ipo_history.json"
 
-# ✅ Set to True for testing — forces an email even if no real IPO found today
-TEST_MODE = True
-
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def get_site_text(url):
-    """Fetches raw text from a website for GPT to process."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
@@ -29,9 +25,8 @@ def get_site_text(url):
         soup = BeautifulSoup(response.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)[:10000]
 
-        # ✅ FIX 2: Warn if content looks empty or suspiciously short
         if len(text) < 200:
-            print(f"WARNING: Content from {url} looks too short ({len(text)} chars) — site may have blocked the scraper or uses JS rendering.")
+            print(f"WARNING: Content from {url} looks too short ({len(text)} chars) — site may have blocked scraper or uses JS rendering.")
             return ""
 
         print(f"OK: Fetched {len(text)} chars from {url}")
@@ -49,7 +44,6 @@ def get_site_text(url):
 
 
 def get_receivers():
-    """Reads email addresses from the emails.txt file."""
     if not os.path.exists(EMAIL_FILE):
         print("WARNING: emails.txt not found!")
         return []
@@ -59,49 +53,49 @@ def get_receivers():
     return receivers
 
 
+def load_sent_log():
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_sent_log(sent_log):
+    with open(LOG_FILE, 'w') as f:
+        json.dump(sent_log, f)
+
+
 def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
     print(f"--- IPO Check Started for {today_date} ---")
 
-    # ✅ TEST MODE: skip scraping and send a dummy email
-    if TEST_MODE:
-        print("TEST MODE is ON — sending a test email without scraping.")
-        dummy_ipo = {
-            "name": "Test Company Ltd.",
-            "category": "General Public",
-            "price": "100",
-            "units": "500,000",
-            "closing_date": "2025-06-20"
-        }
-        send_email(dummy_ipo, is_test=True)
-        return
-
     sebon_text = get_site_text("https://www.sebon.gov.np/ipo-approved")
     sharesansar_text = get_site_text("https://www.sharesansar.com/existing-issues")
 
-    # ✅ FIX 2: Abort early if both sources failed
     if not sebon_text and not sharesansar_text:
-        print("ERROR: Both sources returned empty content. Cannot proceed. Check scraping or site availability.")
+        print("ERROR: Both sources returned empty content. Cannot proceed.")
         return
 
-    # ✅ FIX 1: More flexible date prompt — GPT handles varied date formats
     prompt = f"""
     Today's date is {today_date} (format: YYYY-MM-DD).
-    
+
     Analyze the text from Nepal's IPO portals below.
-    Find any IPO that OPENS TODAY for:
+    Find any IPO that OPENS TODAY for ONLY these two categories:
     1. 'General Public'
-    2. 'Foreign Employee' or 'Migrant Workers'.
+    2. 'Foreign Employee' or 'Migrant Workers'
 
     IMPORTANT — Date matching rules:
-    - The opening date may appear in various formats: "2025-06-15", "2025/06/15", "June 15, 2025", "15 Jun 2025", "15-06-2025", "2082-03-01" (Nepali BS date), etc.
+    - The opening date may appear in various formats: "2025-06-15", "2025/06/15", "June 15, 2025", "15 Jun 2025", "15-06-2025", Nepali BS date, etc.
     - Convert any format to determine if the opening date matches today: {today_date}.
     - If the text says the IPO is "currently open" or "open now" without an explicit date, treat it as opening today.
-    - If the opening date is ambiguous but close to today (within 1 day), include it and note the uncertainty.
+    - If the opening date is ambiguous but close to today (within 1 day), include it.
 
     STRICT RULES:
-    - Ignore 'Local Residents', 'Staff', or 'Mutual Fund' quotas.
-    - Return ONLY valid JSON.
+    - ONLY return IPOs for 'General Public' OR 'Foreign Employee'/'Migrant Workers' categories.
+    - Completely IGNORE and DO NOT return: 'Local Residents', 'Staff', 'Mutual Fund', or any other quota.
+    - Each company should appear AT MOST ONCE in the results, even if it has both General Public and FE quotas.
+      In that case, set category as "General Public & Foreign Employee".
+    - Return ONLY valid JSON, no extra text.
 
     Text from SEBON: {sebon_text}
     Text from ShareSansar: {sharesansar_text}
@@ -117,7 +111,7 @@ def check_ipo_with_gpt():
             response_format={"type": "json_object"}
         )
         raw_content = response.choices[0].message.content
-        print(f"GPT raw response: {raw_content}")  # ✅ FIX 2: Log GPT output
+        print(f"GPT raw response: {raw_content}")
         found_ipos = json.loads(raw_content).get("items", [])
     except Exception as e:
         print(f"GPT API Error: {e}")
@@ -129,35 +123,28 @@ def check_ipo_with_gpt():
 
     print(f"Found {len(found_ipos)} IPO(s): {[i['name'] for i in found_ipos]}")
 
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r') as f:
-            sent_log = json.load(f)
-    else:
-        sent_log = []
+    sent_log = load_sent_log()
 
     for ipo in found_ipos:
-        unique_id = f"{ipo['name']}_{ipo['category']}"
+        # ✅ Keyed by company name only — ensures 1 email per company ever
+        unique_id = ipo['name'].strip().lower()
         if unique_id not in sent_log:
             send_email(ipo)
             sent_log.append(unique_id)
-            print(f"Email sent for: {unique_id}")
+            save_sent_log(sent_log)
+            print(f"Email sent and logged for: {ipo['name']}")
         else:
-            print(f"Skipping {unique_id} — already sent previously.")
-
-    with open(LOG_FILE, 'w') as f:
-        json.dump(sent_log, f)
+            print(f"Skipping {ipo['name']} — already sent previously.")
 
 
-def send_email(ipo, is_test=False):
+def send_email(ipo):
     receivers = get_receivers()
     if not receivers:
         return
 
-    test_banner = "\n    ⚠️  THIS IS A TEST EMAIL — not a real IPO alert.\n" if is_test else ""
-    subject = f"{'[TEST] ' if is_test else ''}🔔 DAILY IPO ALERT: {ipo['name']} is now OPEN!"
+    subject = f"🔔 IPO ALERT: {ipo['name']} is now OPEN!"
     body = f"""
     -------------------------------------------
-    {test_banner}
     A new IPO has opened today for application.
 
     🏢 COMPANY: {ipo['name']}
@@ -182,7 +169,7 @@ def send_email(ipo, is_test=False):
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-        print(f"{'Test alert' if is_test else 'Daily alert'} sent to {len(receivers)} people.")
+        print(f"Alert sent to {len(receivers)} people.")
     except Exception as e:
         print(f"Email failed: {e}")
 
