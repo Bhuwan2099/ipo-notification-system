@@ -23,5 +23,5 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_SENDER: "bhuwan36ch23@gmail.com"
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
         run: python ipo_tracker.py
