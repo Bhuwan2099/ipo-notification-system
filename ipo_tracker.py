@@ -90,7 +90,7 @@ A new IPO has opened today for application.
 
 🚀 Good luck with your allotment!
 -------------------------------------------
-IPO Tracking System
+IPO Tracking System       -- Bhuwan Chaulagain
     """
     msg = MIMEText(body)
     msg['Subject'] = subject
