@@ -9,6 +9,7 @@ import json
 import io
 import traceback
 import sys
+import time
 
 # --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -28,11 +29,26 @@ HEADERS = {
 
 def get_site_text(url):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        base = "/".join(url.split("/")[:3])
+        session.get(base, timeout=15)
+        time.sleep(2)
+        r = session.get(url, timeout=30)
+        print(f"  [{r.status_code}] {url} — raw: {len(r.text)} chars")
         soup = BeautifulSoup(r.text, 'html.parser')
-        for tag in soup(['script', 'style']): tag.decompose()
+
+        # Try tables first — IPO data is always in a table
+        tables = soup.find_all('table')
+        if tables:
+            table_text = ' '.join(t.get_text(separator=' ', strip=True) for t in tables)
+            print(f"  Found {len(tables)} table(s), {len(table_text)} chars")
+            if len(table_text) > 100:
+                return table_text[:20000]
+
+        for tag in soup(['script', 'style', 'nav', 'footer']): tag.decompose()
         text = soup.get_text(separator=' ', strip=True)
-        print(f"  {url} — {len(text)} chars")
+        print(f"  Extracted: {len(text)} chars")
         return text[:20000]
     except Exception as e:
         print(f"  ❌ Error {url}: {e}")
@@ -91,6 +107,11 @@ def check_ipo_with_gpt():
 
     sharesansar = get_site_text("https://www.sharesansar.com/existing-issues")
     merolagani  = get_site_text("https://merolagani.com/IPOResult.aspx")
+
+    print(f"\nTotal — Sharesansar: {len(sharesansar)} | Merolagani: {len(merolagani)}")
+
+    if len(sharesansar) < 200 and len(merolagani) < 200:
+        print("⚠️ Both sites returned very little data — possible JS rendering issue.")
 
     prompt = f"""
 Today is {today_date}.
