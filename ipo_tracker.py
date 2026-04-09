@@ -9,13 +9,6 @@ import json
 import io
 import traceback
 import sys
-import time
-
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -27,42 +20,22 @@ NOTIFY_EMAIL = "bhuwan36ch23@gmail.com"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def get_driver():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    driver = webdriver.Chrome(options=options)
-    return driver
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
 
-def get_site_text_selenium(driver, url, wait_for_selector=None, wait_seconds=5):
+def get_site_text(url):
     try:
-        print(f"  Loading: {url}")
-        driver.get(url)
-        if wait_for_selector:
-            try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, wait_for_selector))
-                )
-            except:
-                print(f"  ⚠️ Selector '{wait_for_selector}' not found, waiting {wait_seconds}s anyway...")
-                time.sleep(wait_seconds)
-        else:
-            time.sleep(wait_seconds)
-
-        html = driver.page_source
-        print(f"  Page source: {len(html)} chars")
-        soup = BeautifulSoup(html, 'html.parser')
-        for tag in soup(['script', 'style']):
-            tag.decompose()
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        for tag in soup(['script', 'style']): tag.decompose()
         text = soup.get_text(separator=' ', strip=True)
-        print(f"  Extracted text: {len(text)} chars")
-        return text[:25000]
+        print(f"  {url} — {len(text)} chars")
+        return text[:20000]
     except Exception as e:
-        print(f"  ❌ Selenium error for {url}: {e}")
+        print(f"  ❌ Error {url}: {e}")
         return ""
 
 def send_log_email(subject, body):
@@ -85,27 +58,25 @@ def get_receivers():
 
 def send_email(ipo):
     receivers = list(set(get_receivers() + [NOTIFY_EMAIL]))
-
     subject = f"🔔 DAILY IPO ALERT: {ipo['name']} is now OPEN!"
     body = f"""
-    -------------------------------------------
-    A new IPO has opened today for application.
+-------------------------------------------
+A new IPO has opened today for application.
 
-    🏢 COMPANY: {ipo.get('name')}
-    📌 CATEGORY: {ipo.get('category')}
-    💰 UNIT PRICE: Rs. {ipo.get('price')}
-    📊 TOTAL UNITS: {ipo.get('units')}
-    ⏳ CLOSING DATE: {ipo.get('closing_date')}
+🏢 COMPANY: {ipo.get('name')}
+📌 CATEGORY: {ipo.get('category')}
+💰 UNIT PRICE: Rs. {ipo.get('price')}
+📊 TOTAL UNITS: {ipo.get('units')}
+⏳ CLOSING DATE: {ipo.get('closing_date')}
 
-    🚀 Good luck with your allotment!
-    --------------------------------------------
-    IPO Tracking System
+🚀 Good luck with your allotment!
+-------------------------------------------
+IPO Tracking System
     """
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = f"IPO Tracker <{EMAIL_SENDER}>"
     msg['To'] = ", ".join(receivers)
-
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
@@ -118,41 +89,25 @@ def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
     print(f"--- Running Critical Check: {today_date} ---")
 
-    print("\n[Scraping sources with Selenium...]")
-    driver = get_driver()
-    try:
-        sebon       = get_site_text_selenium(driver, "https://www.sebon.gov.np/ipo-approved",       wait_for_selector="table tr", wait_seconds=6)
-        sharesansar = get_site_text_selenium(driver, "https://www.sharesansar.com/existing-issues", wait_for_selector="table tr", wait_seconds=6)
-        merolagani  = get_site_text_selenium(driver, "https://merolagani.com/IPOResult.aspx",       wait_for_selector="table tr", wait_seconds=6)
-    finally:
-        driver.quit()
-
-    print(f"\nSebon: {len(sebon)} chars | Sharesansar: {len(sharesansar)} chars | Merolagani: {len(merolagani)} chars")
-
-    if not sebon and not sharesansar and not merolagani:
-        print("❌ All sources empty — cannot proceed.")
-        return
+    sharesansar = get_site_text("https://www.sharesansar.com/existing-issues")
+    merolagani  = get_site_text("https://merolagani.com/IPOResult.aspx")
 
     prompt = f"""
-    Current Date: {today_date}.
-    Task: Extract any IPO that is OPEN for application TODAY from the text below.
-    An IPO is open today if its opening date <= {today_date} AND closing date >= {today_date}.
-    Target categories: 'General Public' or 'Foreign Employee/Migrant Workers'.
+Today is {today_date}.
+Find ALL IPOs currently open for application today from the data below.
+An IPO is open if: opening_date <= {today_date} <= closing_date.
+Target: General Public or Foreign Employee/Migrant Workers.
 
-    SOURCE 1 - SEBON:
-    {sebon}
-    ---
-    SOURCE 2 - SHARESANSAR:
-    {sharesansar}
-    ---
-    SOURCE 3 - MEROLAGANI:
-    {merolagani}
+SHARESANSAR:
+{sharesansar}
+---
+MEROLAGANI:
+{merolagani}
 
-    RULES:
-    1. Include any IPO whose application window covers today {today_date}.
-    2. Return JSON only: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
-    3. If nothing is open today return {{"items": []}}.
-    """
+Return ONLY this JSON:
+{{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
+If none: {{"items": []}}
+"""
 
     try:
         response = client.chat.completions.create(
