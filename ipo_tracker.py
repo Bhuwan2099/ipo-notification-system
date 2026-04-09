@@ -9,6 +9,13 @@ import json
 import io
 import traceback
 import sys
+import time
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -20,17 +27,45 @@ NOTIFY_EMAIL = "bhuwan36ch23@gmail.com"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-}
+def get_driver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    driver = webdriver.Chrome(options=options)
+    return driver
+
+def get_site_text_selenium(driver, url, wait_for_selector=None, wait_seconds=5):
+    try:
+        print(f"  Loading: {url}")
+        driver.get(url)
+        if wait_for_selector:
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, wait_for_selector))
+                )
+            except:
+                print(f"  ⚠️ Selector '{wait_for_selector}' not found, waiting {wait_seconds}s anyway...")
+                time.sleep(wait_seconds)
+        else:
+            time.sleep(wait_seconds)
+
+        html = driver.page_source
+        print(f"  Page source: {len(html)} chars")
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(['script', 'style']):
+            tag.decompose()
+        text = soup.get_text(separator=' ', strip=True)
+        print(f"  Extracted text: {len(text)} chars")
+        return text[:25000]
+    except Exception as e:
+        print(f"  ❌ Selenium error for {url}: {e}")
+        return ""
 
 def send_log_email(subject, body):
-    """Always sends run output/errors to NOTIFY_EMAIL."""
     try:
         msg = MIMEText(body)
         msg['Subject'] = subject
@@ -42,25 +77,6 @@ def send_log_email(subject, body):
         print(f"✅ Log email sent to {NOTIFY_EMAIL}")
     except Exception as e:
         print(f"❌ Log email failed: {e}")
-
-def get_site_text(url):
-    try:
-        session = requests.Session()
-        base = "/".join(url.split("/")[:3])
-        session.get(base, headers=HEADERS, timeout=15)
-        response = session.get(url, headers=HEADERS, timeout=30)
-        print(f"  [{response.status_code}] {url} — {len(response.text)} chars")
-        if response.status_code != 200:
-            return ""
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for tag in soup(['script', 'style']):
-            tag.decompose()
-        text = soup.get_text(separator=' ', strip=True)
-        print(f"  Extracted: {len(text)} chars")
-        return text[:20000]
-    except Exception as e:
-        print(f"  ❌ Scraper Error for {url}: {e}")
-        return ""
 
 def get_receivers():
     if not os.path.exists(EMAIL_FILE): return []
@@ -102,10 +118,14 @@ def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
     print(f"--- Running Critical Check: {today_date} ---")
 
-    print("\n[Scraping sources...]")
-    sebon = get_site_text("https://www.sebon.gov.np/ipo-approved")
-    sharesansar = get_site_text("https://www.sharesansar.com/existing-issues")
-    merolagani = get_site_text("https://merolagani.com/IPOResult.aspx")
+    print("\n[Scraping sources with Selenium...]")
+    driver = get_driver()
+    try:
+        sebon       = get_site_text_selenium(driver, "https://www.sebon.gov.np/ipo-approved",       wait_for_selector="table tr", wait_seconds=6)
+        sharesansar = get_site_text_selenium(driver, "https://www.sharesansar.com/existing-issues", wait_for_selector="table tr", wait_seconds=6)
+        merolagani  = get_site_text_selenium(driver, "https://merolagani.com/IPOResult.aspx",       wait_for_selector="table tr", wait_seconds=6)
+    finally:
+        driver.quit()
 
     print(f"\nSebon: {len(sebon)} chars | Sharesansar: {len(sharesansar)} chars | Merolagani: {len(merolagani)} chars")
 
@@ -115,11 +135,10 @@ def check_ipo_with_gpt():
 
     prompt = f"""
     Current Date: {today_date}.
-    Task: Extract any IPO from the text that is OPEN for application TODAY.
+    Task: Extract any IPO that is OPEN for application TODAY from the text below.
     An IPO is open today if its opening date <= {today_date} AND closing date >= {today_date}.
-    Target: 'General Public' or 'Foreign Employee/Migrant Workers'.
+    Target categories: 'General Public' or 'Foreign Employee/Migrant Workers'.
 
-    Data:
     SOURCE 1 - SEBON:
     {sebon}
     ---
@@ -130,9 +149,9 @@ def check_ipo_with_gpt():
     {merolagani}
 
     RULES:
-    1. If you see an IPO open on {today_date}, include it.
-    2. Format as JSON: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
-    3. If no IPOs open today, return {{"items": []}}.
+    1. Include any IPO whose application window covers today {today_date}.
+    2. Return JSON only: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
+    3. If nothing is open today return {{"items": []}}.
     """
 
     try:
