@@ -80,6 +80,8 @@ def send_email(ipo):
     subject = f"🔔 DAILY IPO ALERT: {ipo['name']} is now OPEN!"
     body = f"""
 -------------------------------------------
+           IPO TRACKING SYSTEM
+-------------------------------------------
 A new IPO has opened today for application.
 
 🏢 COMPANY:      {ipo.get('name')}
@@ -90,7 +92,7 @@ A new IPO has opened today for application.
 
 🚀 Good luck with your allotment!
 -------------------------------------------
-IPO Tracking System       -- Bhuwan Chaulagain
+See you with another IPO update      -- Bhuwan Chaulagain
     """
     msg = MIMEText(body)
     msg['Subject'] = subject
