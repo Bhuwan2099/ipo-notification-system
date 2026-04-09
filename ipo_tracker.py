@@ -1,52 +1,55 @@
 import os
-import requests
-from bs4 import BeautifulSoup
-from openai import OpenAI
 import smtplib
-from email.mime.text import MIMEText
-from datetime import datetime
 import json
 import io
 import traceback
 import sys
 import time
+from email.mime.text import MIMEText
+from datetime import datetime
+from bs4 import BeautifulSoup
+from openai import OpenAI
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
-EMAIL_FILE = "emails.txt"
-LOG_FILE = "ipo_history.json"
-NOTIFY_EMAIL = "bhuwan36ch23@gmail.com"
+EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD")
+EMAIL_SENDER    = os.environ.get("EMAIL_SENDER")
+EMAIL_FILE      = "emails.txt"
+LOG_FILE        = "ipo_history.json"
+NOTIFY_EMAIL    = "bhuwan36ch23@gmail.com"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-}
+def get_driver():
+    options = Options()
+    options.binary_location = "/usr/bin/chromium-browser"
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+    return driver
 
-def get_site_text(url):
+def get_site_text(driver, url):
     try:
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        base = "/".join(url.split("/")[:3])
-        session.get(base, timeout=15)
-        time.sleep(2)
-        r = session.get(url, timeout=30)
-        print(f"  [{r.status_code}] {url} — raw: {len(r.text)} chars")
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Try tables first — IPO data is always in a table
-        tables = soup.find_all('table')
-        if tables:
-            table_text = ' '.join(t.get_text(separator=' ', strip=True) for t in tables)
-            print(f"  Found {len(tables)} table(s), {len(table_text)} chars")
-            if len(table_text) > 100:
-                return table_text[:20000]
-
-        for tag in soup(['script', 'style', 'nav', 'footer']): tag.decompose()
+        print(f"  Loading: {url}")
+        driver.get(url)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "table tr"))
+            )
+        except:
+            time.sleep(6)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        for tag in soup(['script', 'style']): tag.decompose()
         text = soup.get_text(separator=' ', strip=True)
         print(f"  Extracted: {len(text)} chars")
         return text[:20000]
@@ -58,11 +61,11 @@ def send_log_email(subject, body):
     try:
         msg = MIMEText(body)
         msg['Subject'] = subject
-        msg['From'] = f"IPO Tracker <{EMAIL_SENDER}>"
-        msg['To'] = NOTIFY_EMAIL
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, [NOTIFY_EMAIL], msg.as_string())
+        msg['From']    = f"IPO Tracker <{EMAIL_SENDER}>"
+        msg['To']      = NOTIFY_EMAIL
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
+            s.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            s.sendmail(EMAIL_SENDER, [NOTIFY_EMAIL], msg.as_string())
         print(f"✅ Log email sent to {NOTIFY_EMAIL}")
     except Exception as e:
         print(f"❌ Log email failed: {e}")
@@ -79,10 +82,10 @@ def send_email(ipo):
 -------------------------------------------
 A new IPO has opened today for application.
 
-🏢 COMPANY: {ipo.get('name')}
-📌 CATEGORY: {ipo.get('category')}
-💰 UNIT PRICE: Rs. {ipo.get('price')}
-📊 TOTAL UNITS: {ipo.get('units')}
+🏢 COMPANY:      {ipo.get('name')}
+📌 CATEGORY:     {ipo.get('category')}
+💰 UNIT PRICE:   Rs. {ipo.get('price')}
+📊 TOTAL UNITS:  {ipo.get('units')}
 ⏳ CLOSING DATE: {ipo.get('closing_date')}
 
 🚀 Good luck with your allotment!
@@ -91,13 +94,13 @@ IPO Tracking System
     """
     msg = MIMEText(body)
     msg['Subject'] = subject
-    msg['From'] = f"IPO Tracker <{EMAIL_SENDER}>"
-    msg['To'] = ", ".join(receivers)
+    msg['From']    = f"IPO Tracker <{EMAIL_SENDER}>"
+    msg['To']      = ", ".join(receivers)
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-        print(f"✅ Alert successfully sent for {ipo['name']}")
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
+            s.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            s.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        print(f"✅ Alert sent for {ipo['name']}")
     except Exception as e:
         print(f"❌ Email failed: {e}")
 
@@ -105,13 +108,14 @@ def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
     print(f"--- Running Critical Check: {today_date} ---")
 
-    sharesansar = get_site_text("https://www.sharesansar.com/existing-issues")
-    merolagani  = get_site_text("https://merolagani.com/IPOResult.aspx")
+    driver = get_driver()
+    try:
+        sharesansar = get_site_text(driver, "https://www.sharesansar.com/existing-issues")
+        merolagani  = get_site_text(driver, "https://merolagani.com/IPOResult.aspx")
+    finally:
+        driver.quit()
 
-    print(f"\nTotal — Sharesansar: {len(sharesansar)} | Merolagani: {len(merolagani)}")
-
-    if len(sharesansar) < 200 and len(merolagani) < 200:
-        print("⚠️ Both sites returned very little data — possible JS rendering issue.")
+    print(f"\nSharesansar: {len(sharesansar)} | Merolagani: {len(merolagani)}")
 
     prompt = f"""
 Today is {today_date}.
@@ -148,22 +152,21 @@ If none: {{"items": []}}
         print(f"No IPOs found open on {today_date}.")
         return
 
+    sent_log = []
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
             try: sent_log = json.load(f)
             except: sent_log = []
-    else:
-        sent_log = []
 
     for ipo in found_ipos:
-        name = ipo.get('name', 'Unknown')
+        name     = ipo.get('name', 'Unknown')
         category = ipo.get('category', 'General')
-        unique_id = f"{name}_{category}_{today_date}"
-        if unique_id not in sent_log:
+        uid      = f"{name}_{category}_{today_date}"
+        if uid not in sent_log:
             send_email(ipo)
-            sent_log.append(unique_id)
+            sent_log.append(uid)
         else:
-            print(f"Already sent: {unique_id}")
+            print(f"Already sent: {uid}")
 
     with open(LOG_FILE, 'w') as f:
         json.dump(sent_log, f)
@@ -171,7 +174,6 @@ If none: {{"items": []}}
 if __name__ == "__main__":
     log_capture = io.StringIO()
     sys.stdout = log_capture
-
     try:
         check_ipo_with_gpt()
         sys.stdout = sys.__stdout__
@@ -182,6 +184,6 @@ if __name__ == "__main__":
         sys.stdout = sys.__stdout__
         output = log_capture.getvalue()
         error = traceback.format_exc()
-        full_output = f"OUTPUT:\n{output}\n\nERROR:\n{error}"
-        print(full_output)
-        send_log_email("❌ IPO Tracker — CRASHED", full_output)
+        full = f"OUTPUT:\n{output}\n\nERROR:\n{error}"
+        print(full)
+        send_log_email("❌ IPO Tracker — CRASHED", full)
