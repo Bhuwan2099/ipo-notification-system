@@ -95,7 +95,7 @@ IPO Tracking System
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From']    = f"IPO Tracker <{EMAIL_SENDER}>"
-    msg['To']      = ", ".join(receivers)
+    msg['To']      = "Undisclosed Recipeints"
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
             s.login(EMAIL_SENDER, EMAIL_PASSWORD)
