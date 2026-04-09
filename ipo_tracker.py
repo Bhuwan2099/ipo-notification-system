@@ -17,24 +17,22 @@ LOG_FILE = "ipo_history.json"
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_site_text(url):
-    """Fetches text from the IPO portals."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=20)
         soup = BeautifulSoup(response.text, 'html.parser')
-        return soup.get_text(separator=' ', strip=True)[:10000]
+        # We take a larger chunk of text to ensure the IPO tables are included
+        return soup.get_text(separator=' ', strip=True)[:15000]
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        print(f"Scraper Error for {url}: {e}")
         return ""
 
 def get_receivers():
-    """Reads the subscriber list."""
     if not os.path.exists(EMAIL_FILE): return []
     with open(EMAIL_FILE, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
 def send_email(ipo):
-    """Sends the alert to everyone in emails.txt."""
     receivers = get_receivers()
     if not receivers: return
 
@@ -53,7 +51,6 @@ def send_email(ipo):
     --------------------------------------------
     IPO Tracking System
     """
-
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = f"IPO Tracker <{EMAIL_SENDER}>"
@@ -63,41 +60,52 @@ def send_email(ipo):
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-        print(f"✅ Alert sent for {ipo['name']}")
+        print(f"✅ Alert successfully sent for {ipo['name']}")
     except Exception as e:
         print(f"❌ Email failed: {e}")
 
 def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
-    print(f"--- Checking IPOs for {today_date} ---")
+    print(f"--- Running Critical Check: {today_date} ---")
 
-    sebon_text = get_site_text("https://www.sebon.gov.np/ipo-approved")
-    sharesansar_text = get_site_text("https://www.sharesansar.com/existing-issues")
+    sebon = get_site_text("https://www.sebon.gov.np/ipo-approved")
+    sharesansar = get_site_text("https://www.sharesansar.com/existing-issues")
 
+    # LOOSER PROMPT: We tell GPT to be smarter about finding "Today"
     prompt = f"""
-    Today's date is {today_date}. Identify IPOs opening TODAY ({today_date}) for 'General Public' or 'Foreign Employee'. 
-    Return ONLY JSON: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
-    If none, return {{"items": []}}.
-    Text: {sebon_text} | {sharesansar_text}
+    Current Date: {today_date}. 
+    Task: Extract any IPO from the text that is OPEN for application TODAY.
+    Target: 'General Public' or 'Foreign Employee/Migrant Workers'.
+    
+    Data:
+    {sebon}
+    ---
+    {sharesansar}
+
+    RULES:
+    1. If you see an IPO opening on {today_date}, include it.
+    2. Format as JSON: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
+    3. If no IPOs open today, return {{"items": []}}.
     """
 
     try:
-        # Fixed syntax for GPT-4o
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        found_ipos = json.loads(response.choices[0].message.content).get("items", [])
+        content = response.choices[0].message.content
+        print(f"AI Output: {content}") # CHECK THIS IN YOUR LOGS
+        found_ipos = json.loads(content).get("items", [])
     except Exception as e:
-        print(f"GPT Error: {e}")
+        print(f"GPT or JSON Error: {e}")
         return
 
     if not found_ipos:
-        print("No new IPOs opening today.")
+        print(f"No IPOs found for {today_date}.")
         return
 
-    # Load history to prevent double-sending
+    # History Logic
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
             try: sent_log = json.load(f)
@@ -110,6 +118,8 @@ def check_ipo_with_gpt():
         if unique_id not in sent_log:
             send_email(ipo)
             sent_log.append(unique_id)
+        else:
+            print(f"Already sent: {unique_id}")
 
     with open(LOG_FILE, 'w') as f:
         json.dump(sent_log, f)
