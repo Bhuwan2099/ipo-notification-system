@@ -2,25 +2,43 @@ on:
   schedule:
     - cron: '30 4 * * *'
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # This ensures the bot has permission to write back to your repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Install Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y chromium-browser chromium-chromedriver
+
       - name: Install dependencies
         run: pip install requests beautifulsoup4 openai selenium python-dotenv
+
       - name: Run IPO Script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
         run: python ipo_tracker.py
+
+      # --- NEW STEP TO SAVE THE JSON FILE ---
+      - name: Save History
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add ipo_history.json
+          # Only commit if the file actually changed to avoid errors
+          git commit -m "Update IPO history log [skip ci]" || echo "No changes to commit"
+          git push
