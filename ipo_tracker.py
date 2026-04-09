@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from datetime import datetime
 import json
 
-# --- Configuration (Pulled from GitHub Secrets & Environment) ---
+# --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
@@ -16,9 +16,8 @@ LOG_FILE = "ipo_history.json"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-
 def get_site_text(url):
-    """Fetches raw text from a website for GPT to process."""
+    """Fetches text from the IPO portals."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
@@ -28,66 +27,86 @@ def get_site_text(url):
         print(f"Error fetching {url}: {e}")
         return ""
 
-
 def get_receivers():
-    """Reads email addresses from the emails.txt file."""
-    if not os.path.exists(EMAIL_FILE):
-        return []
+    """Reads the subscriber list."""
+    if not os.path.exists(EMAIL_FILE): return []
     with open(EMAIL_FILE, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
+def send_email(ipo):
+    """Sends the alert to everyone in emails.txt."""
+    receivers = get_receivers()
+    if not receivers: return
+
+    subject = f"🔔 DAILY IPO ALERT: {ipo['name']} is now OPEN!"
+    body = f"""
+    -------------------------------------------
+    A new IPO has opened today for application.
+
+    🏢 COMPANY: {ipo.get('name')}
+    📌 CATEGORY: {ipo.get('category')}
+    💰 UNIT PRICE: Rs. {ipo.get('price')}
+    📊 TOTAL UNITS: {ipo.get('units')}
+    ⏳ CLOSING DATE: {ipo.get('closing_date')}
+
+    🚀 Good luck with your allotment!
+    --------------------------------------------
+    IPO Tracking System
+    """
+
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = f"IPO Tracker <{EMAIL_SENDER}>"
+    msg['To'] = EMAIL_SENDER 
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        print(f"✅ Alert sent for {ipo['name']}")
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
 
 def check_ipo_with_gpt():
     today_date = datetime.now().strftime("%Y-%m-%d")
-    print(f"--- IPO Check Started for {today_date} ---")
+    print(f"--- Checking IPOs for {today_date} ---")
 
     sebon_text = get_site_text("https://www.sebon.gov.np/ipo-approved")
     sharesansar_text = get_site_text("https://www.sharesansar.com/existing-issues")
 
     prompt = f"""
-    Today's date is {today_date}. 
-    Analyze the text from Nepal's IPO portals below. 
-    Find any IPO that OPENS TODAY ({today_date}) for:
-    1. 'General Public' 
-    2. 'Foreign Employee' or 'Migrant Workers'.
-
-    STRICT RULES:
-    - Only return an IPO if its OPENING DATE is exactly {today_date}.
-    - Ignore 'Local Residents', 'Staff', or 'Mutual Fund' quotas.
-    - Return ONLY valid JSON.
-
-    Text: SEBON: {sebon_text} | ShareSansar: {sharesansar_text}
-
-    Return format: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
+    Today's date is {today_date}. Identify IPOs opening TODAY ({today_date}) for 'General Public' or 'Foreign Employee'. 
+    Return ONLY JSON: {{"items": [{{"name": "", "units": "", "price": "", "closing_date": "", "category": ""}}]}}
     If none, return {{"items": []}}.
+    Text: {sebon_text} | {sharesansar_text}
     """
 
     try:
-        response = client.responses.create(
+        # Fixed syntax for GPT-4o
+        response = client.chat.completions.create(
             model="gpt-4o",
-            input=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        
-        found_ipos = json.loads(response.output_text).get("items", [])
+        found_ipos = json.loads(response.choices[0].message.content).get("items", [])
     except Exception as e:
-        print(f"GPT API Error: {e}")
+        print(f"GPT Error: {e}")
         return
 
     if not found_ipos:
         print("No new IPOs opening today.")
         return
 
+    # Load history to prevent double-sending
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
-            sent_log = json.load(f)
+            try: sent_log = json.load(f)
+            except: sent_log = []
     else:
         sent_log = []
 
     for ipo in found_ipos:
-        unique_id = f"{ipo['name']}_{ipo['category']}"
+        unique_id = f"{ipo['name']}_{ipo['category']}_{today_date}"
         if unique_id not in sent_log:
             send_email(ipo)
             sent_log.append(unique_id)
@@ -95,47 +114,5 @@ def check_ipo_with_gpt():
     with open(LOG_FILE, 'w') as f:
         json.dump(sent_log, f)
 
-
-def send_email(ipo):
-    receivers = get_receivers()
-    if not receivers: return
-
-    subject = f"🔔 DAILY IPO ALERT: {ipo['name']} is now OPEN!"
-    body = f"""
-
-    -------------------------------------------
-    A new IPO has opened today for application.
-
-    🏢 COMPANY: {ipo['name']}
-    📌 CATEGORY: {ipo['category']}
-    💰 UNIT PRICE: Rs. {ipo['price']}
-    📊 TOTAL UNITS: {ipo['units']}
-    ⏳ CLOSING DATE: {ipo['closing_date']}
-
-       🚀 Good luck with your allotment!
-       
-
-        Please note that this is an auto generated email, please check your meroshare (https://meroshare.cdsc.com.np/#/login) to verify it.
-    --------------------------------------------
-    IPO Tracking System by Bhuwan Chaulagain
-    """
-
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = f"IPO-tracking-system <{EMAIL_SENDER}>"
-
-    # ✔ dummy header (no receiver leaked)
-    msg['To'] = EMAIL_SENDER
-
-
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-
-            # ✔ single fast send
-            server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-
-        print(f"Daily Alert sent to {len(receivers)} people.")
-
-    except Exception as e:
-        print(f"Email failed: {e}")
+if __name__ == "__main__":
+    check_ipo_with_gpt()
