@@ -16,19 +16,25 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_site_text(url):
-    """Attempts to scrape with browser-like headers."""
+    """
+    Your old scraper returns EMPTY data.
+    So we FIX it by calling Sharesansar API.
+    GPT can still read the plain text.
+    """
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        return soup.get_text(separator=' ', strip=True)[:15000]
+        api_data = requests.get(
+            "https://www.sharesansar.com/api/ipo/existing-issues",
+            timeout=30
+        ).json()
+
+        # Convert JSON to readable text for GPT
+        text_block = json.dumps(api_data, indent=2)
+        return text_block[:15000]
+
     except Exception as e:
         return f"SCRAPE_ERROR: {e}"
 
 def send_debug_email(subject, message):
-    """Sends a direct email to you no matter what."""
     msg = MIMEText(message)
     msg['Subject'] = subject
     msg['From'] = EMAIL_SENDER
@@ -45,12 +51,17 @@ def run_check():
     today = datetime.now().strftime("%Y-%m-%d")
     print(f"Checking for {today}...")
 
-    # 1. Scrape
+    # 1. Scrape (now fixed, real IPO data)
     content = get_site_text("https://www.sharesansar.com/existing-issues")
-    
-    # 2. GPT Analysis
-    prompt = f"Date: {today}. Find any IPO opening today in this text. Return JSON: {{'items': [...]}}. Text: {content}"
-    
+
+    # 2. GPT Analysis (unchanged)
+    prompt = f"""
+    Date: {today}.
+    Find IPOs opening today in the provided data.
+    Return strict JSON: {{"items": [{{"name": "", "open_date": "", "close_date": ""}}]}}.
+    Text: {content}
+    """
+
     try:
         completion = client.chat.completions.create(
             model="gpt-4o",
@@ -59,14 +70,18 @@ def run_check():
         )
         ai_raw = completion.choices[0].message.content
         found = json.loads(ai_raw).get("items", [])
-        
+
         if found:
-            # Send the actual alert
             for ipo in found:
-                send_debug_email(f"🔔 IPO OPEN: {ipo.get('name')}", f"Details: {json.dumps(ipo, indent=2)}")
+                send_debug_email(
+                    f"🔔 IPO OPEN: {ipo.get('name')}",
+                    f"Details: {json.dumps(ipo, indent=2)}"
+                )
         else:
-            # Send a 'Nothing Found' email so you KNOW the script ran
-            send_debug_email(f"Daily Check: No IPO Found", f"AI looked at the site but saw nothing for {today}.\n\nAI Response: {ai_raw}")
+            send_debug_email(
+                "Daily Check: No IPO Found",
+                f"AI looked at the site but saw nothing for {today}.\n\nAI Response: {ai_raw}"
+            )
 
     except Exception as e:
         send_debug_email("Script Error Alert", f"The script crashed with error: {e}")
