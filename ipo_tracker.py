@@ -163,7 +163,7 @@ If none: {{"items": []}}
     for ipo in found_ipos:
         name     = ipo.get('name', 'Unknown')
         category = ipo.get('category', 'General')
-        uid      = f"{name}_{category}_{today_date}"
+        uid      = f"{name}_{category}"
         if uid not in sent_log:
             send_email(ipo)
             sent_log.append(uid)
